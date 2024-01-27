@@ -1,0 +1,110 @@
+name: Publish build
+on: 
+  workflow_dispatch:
+    inputs:
+      name:
+        description: 'Web path for the hosted image slider'
+        required: true
+        type: string
+      img-left:
+        description: 'Source url for the image located left of the slider'
+        required: true
+        type: string
+      img-right:
+        description: 'Source url for the image located right of the slider'
+        required: true
+        type: string
+      img-width:
+        description: 'Width in pixels for both images'
+        required: true
+        type: number
+      img-height:
+        description: 'Height in pixels for both images'
+        required: true
+        type: number
+        
+
+jobs:
+  build:
+    name: build-assets
+    runs-on: ubuntu-latest
+    env:
+      WEB_PATH: ${{ inputs.name }}
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm install
+      - name: Build the image slider assets
+        run: |
+          touch .env.production
+          echo "VITE_IMG_ONE_SRC=${{inputs.img-left}}" >> .env.production
+          echo "VITE_IMG_TWO_SRC=${{inputs.img-right}}" >> .env.production
+          echo "VITE_IMG_WIDTH=${{inputs.img-width}}" >> .env.production
+          echo "VITE_IMG_HEIGHT=${{inputs.img-height}}" >> .env.production
+          cat .env.production
+          npm run build
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: assets
+          path: ${{ env.WEB_PATH }}
+          retention-days: 30
+
+  deploy:
+    name: deploy-assets
+    needs: [build]
+    if: success()
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      WEB_PATH: ${{ inputs.name }}
+    steps:
+      - name: Checkout gh-pages
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          token: ${{ secrets.GITHUB_TOKEN }}
+      # user git configs are needed for git commands to work
+      # actual authentication is done using secrets.GITHUB_TOKEN with write permission
+      - name: Set Git User
+        run: |
+          git config --global user.email "github-action@example.com"
+          git config --global user.name "GitHub Action"
+      - name: Download assets
+        uses: actions/download-artifact@v4
+        with:
+          name: assets
+          path: ${{ env.WEB_PATH }}
+      - name: Push assets to gh pages
+        timeout-minutes: 3
+        run: |
+          git add .
+          git commit -m "feat: build and deploy image slider ${{ inputs.name }}"
+          
+          # In case if another action job pushed to gh-pages while we are rebasing for the current job
+          while true; do
+            git pull --rebase
+            if [ $? -ne 0 ]; then
+              echo "Failed to rebase. Please review manually."
+              exit 1
+            fi
+
+            git push
+            if [ $? -eq 0 ]; then
+              echo "Successfully pushed assets to repo."
+              exit 0
+            fi
+          done
+      - name: Output image slider URL
+        run: |
+          FULL_URL=https://Maswho.github.io/embeddable-image-slider/$WEB_PATH
+          echo "::notice title=Published Image Slider::$FULL_URL"
